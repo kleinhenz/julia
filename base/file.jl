@@ -454,8 +454,10 @@ function walkdir(root; topdown=true, follow_symlinks=false, onerror=throw)
     catch err
         isa(err, SystemError) || throw(err)
         onerror(err)
-        #Need to return an empty task to skip the current root folder
-        return Task(()->())
+        # Need to return an empty closed channel to skip the current root folder
+        chnl = Channel(0)
+        close(chnl)
+        return chnl
     end
     dirs = Array{eltype(content)}(0)
     files = Array{eltype(content)}(0)
@@ -467,23 +469,29 @@ function walkdir(root; topdown=true, follow_symlinks=false, onerror=throw)
         end
     end
 
-    function _it()
+    function _it(chnl)
+        close(chnl, current_task())
         if topdown
-            produce(root, dirs, files)
+            put!(chnl, (root, dirs, files))
+            yield()
         end
         for dir in dirs
             path = joinpath(root,dir)
             if follow_symlinks || !islink(path)
                 for (root_l, dirs_l, files_l) in walkdir(path, topdown=topdown, follow_symlinks=follow_symlinks, onerror=onerror)
-                    produce(root_l, dirs_l, files_l)
+                    put!(chnl, (root_l, dirs_l, files_l))
+                    yield()
                 end
             end
         end
         if !topdown
-            produce(root, dirs, files)
+            put!(chnl, (root, dirs, files))
+            yield()
         end
     end
-    Task(_it)
+    chnl = Channel(0)
+    @schedule _it(chnl)
+    return chnl
 end
 
 function unlink(p::AbstractString)

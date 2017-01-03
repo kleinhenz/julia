@@ -75,6 +75,28 @@ function close(c::Channel)
 end
 isopen(c::Channel) = (c.state == :open)
 
+# Associates the lifetime of the Channel to a Task.
+# Closes the channel automatically when the task terminates.
+# Any error in the task is also propagated to waiters on the Channel.
+function close(c::Channel, t::Task)
+    ref = WeakRef(c)
+    register_taskdone_hook(t, tsk->close_chnl_on_taskdone(tsk, ref))
+    nothing
+end
+
+function close_chnl_on_taskdone(t::Task, ref::WeakRef)
+    if ref.value !== nothing
+        c = ref.value
+        !isopen(c) && return
+        if istaskfailed(t)
+            c.state = :closed
+            notify_error(c, task_result(t))
+        else
+            close(c)
+        end
+    end
+end
+
 type InvalidStateException <: Exception
     msg::AbstractString
     state::Symbol

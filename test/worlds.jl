@@ -98,43 +98,48 @@ g265() = [f265(x) for x in 1:3.]
 wc265 = world_counter()
 f265(::Any) = 1.0
 @test wc265 + 1 == world_counter()
+chnls = [Channel(0), Channel(0)]
 t265 = @async begin
-    local ret = nothing
+    foreach(c->close(c, current_task()), chnls)
     while true
-        (f, args) = produce(ret)
-        ret = f(args...)
+        (f, args) = take!(chnls[1])
+        put!(chnls[2], f(args...))
     end
 end
-@test consume(t265) === nothing
+function put_n_take!(v...)
+    put!(chnls[1], v)
+    take!(chnls[2])
+end
+
 wc265 = world_counter()
-@test consume(t265, world_counter, ()) == wc265
-@test consume(t265, tls_world_age, ()) == wc265
+@test put_n_take!(world_counter, ()) == wc265
+@test put_n_take!(tls_world_age, ()) == wc265
 f265(::Int) = 1
-@test consume(t265, world_counter, ()) == wc265 + 1 == world_counter() == tls_world_age()
-@test consume(t265, tls_world_age, ()) == wc265
+@test put_n_take!(world_counter, ()) == wc265 + 1 == world_counter() == tls_world_age()
+@test put_n_take!(tls_world_age, ()) == wc265
 
 @test g265() == Int[1, 1, 1]
 @test Core.Inference.return_type(f265, (Any,)) == Union{Float64, Int}
 @test Core.Inference.return_type(f265, (Int,)) == Int
 @test Core.Inference.return_type(f265, (Float64,)) == Float64
 
-@test consume(t265, g265, ()) == Float64[1.0, 1.0, 1.0]
-@test consume(t265, Core.Inference.return_type, (f265, (Any,))) == Float64
-@test consume(t265, Core.Inference.return_type, (f265, (Int,))) == Float64
-@test consume(t265, Core.Inference.return_type, (f265, (Float64,))) == Float64
-@test consume(t265, Core.Inference.return_type, (f265, (Float64,))) == Float64
+@test put_n_take!(g265, ()) == Float64[1.0, 1.0, 1.0]
+@test put_n_take!(Core.Inference.return_type, (f265, (Any,))) == Float64
+@test put_n_take!(Core.Inference.return_type, (f265, (Int,))) == Float64
+@test put_n_take!(Core.Inference.return_type, (f265, (Float64,))) == Float64
+@test put_n_take!(Core.Inference.return_type, (f265, (Float64,))) == Float64
 
 
 # test that reflection ignores worlds
 @test Base.return_types(f265, (Any,)) == Any[Int, Float64]
-@test consume(t265, Base.return_types, (f265, (Any,))) == Any[Int, Float64]
+@test put_n_take!(Base.return_types, (f265, (Any,))) == Any[Int, Float64]
 
 
 # test for method errors
 h265() = true
 loc_h265 = "$(Base.source_path()):$(@__LINE__ - 1)"
 @test h265()
-@test_throws MethodError consume(t265, h265, ())
+@test_throws MethodError put_n_take!(h265, ())
 @test_throws MethodError wait(t265)
 @test istaskdone(t265)
 let ex = t265.exception
